@@ -219,7 +219,10 @@ export function isAllianceRace(race: WowRace): race is AllianceRace {
 }
 
 export function normalizeCharacterName(name: string): string {
-  const trimmed = name.trim();
+  const trimmed = name.trim().replace(/\s+/g, ' ');
   if (!trimmed) return '';
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+  return trimmed
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
 }

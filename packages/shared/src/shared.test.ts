@@ -33,8 +33,9 @@ describe('WoW: Forever Domain Model (Alliance)', () => {
     expect(WOW_FOREVER_RAIDS['onyxia-lair'].size).toBe(40);
   });
 
-  it('normalizes character names properly', () => {
+  it('normalizes character names properly (including two-part WoW: Forever names)', () => {
     expect(normalizeCharacterName('  aRTHAS ')).toBe('Arthas');
+    expect(normalizeCharacterName('  owl   mINUS ')).toBe('Owl Minus');
   });
 });
 
