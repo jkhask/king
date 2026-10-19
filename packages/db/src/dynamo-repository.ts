@@ -13,6 +13,7 @@ import type {
   CandidateLootSummary,
   GuildBankItem,
   GuildCharacter,
+  GuildConfig,
   GuildRepository,
   GuildRequestTicket,
   LootCouncilCandidateInterest,
@@ -83,6 +84,50 @@ export class DynamoGuildRepository implements GuildRepository {
         },
       });
     }
+  }
+
+  async getGuildConfig(guildId: string): Promise<GuildConfig | null> {
+    const res = await this.docClient.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          pk: `GUILD#${guildId}`,
+          sk: 'CONFIG',
+        },
+      })
+    );
+    return (res.Item as GuildConfig | undefined) ?? null;
+  }
+
+  async upsertGuildConfig(config: GuildConfig): Promise<GuildConfig> {
+    await this.docClient.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          pk: `GUILD#${config.guildId}`,
+          sk: 'CONFIG',
+          gsi1pk: 'GUILD_CONFIGS',
+          gsi1sk: `GUILD#${config.guildId}`,
+          entityType: 'GUILD_CONFIG',
+          ...config,
+        },
+      })
+    );
+    return config;
+  }
+
+  async listConfiguredGuilds(): Promise<GuildConfig[]> {
+    const res = await this.docClient.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'gsi1',
+        KeyConditionExpression: 'gsi1pk = :pk',
+        ExpressionAttributeValues: {
+          ':pk': 'GUILD_CONFIGS',
+        },
+      })
+    );
+    return (res.Items ?? []) as GuildConfig[];
   }
 
   async upsertCharacter(char: GuildCharacter): Promise<GuildCharacter> {

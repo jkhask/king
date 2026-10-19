@@ -1,10 +1,11 @@
-import type {
-  CandidateLootSummary,
-  GuildCharacter,
-  GuildRequestTicket,
-  LootCouncilSession,
-  RaidEvent,
-  RaidSignup,
+import {
+  type CandidateLootSummary,
+  type GuildCharacter,
+  type GuildRequestTicket,
+  type LootCouncilSession,
+  type RaidEvent,
+  type RaidSignup,
+  sortCandidatesByRecommendation,
 } from '@dr/db';
 import {
   CLASS_ICONS,
@@ -203,40 +204,34 @@ export function buildRaidEventMessage(
   };
 }
 
+function formatRankBadge(rank: number): string {
+  if (rank === 1) return '🥇 #1 Recommended';
+  if (rank === 2) return '🥈 #2 Recommended';
+  if (rank === 3) return '🥉 #3 Recommended';
+  return `#${rank}`;
+}
+
 export function buildCandidateComparisonEmbed(
   title: string,
   description: string,
-  summaries: CandidateLootSummary[],
-  session?: LootCouncilSession
+  summaries: CandidateLootSummary[]
 ): APIEmbed {
-  const voteCounts = new Map<string, string[]>();
-  if (session) {
-    for (const [officerId, candName] of Object.entries(session.votes)) {
-      const lower = candName.toLowerCase();
-      const voters = voteCounts.get(lower) ?? [];
-      voters.push(`<@${officerId}>`);
-      voteCounts.set(lower, voters);
-    }
-  }
+  const ranked = sortCandidatesByRecommendation(summaries);
 
-  const fields = summaries.map((s) => {
+  const fields = ranked.map((s) => {
     const charMeta = s.character
-      ? `${CLASS_ICONS[s.character.wowClass]} ${s.character.wowClass} (${s.character.primaryRole})`
+      ? `${CLASS_ICONS[s.character.wowClass]} ${s.character.wowClass} (${s.character.primaryRole}${s.character.isMain ? ' • ⭐ Main' : ' • 🔹 Alt'})`
       : 'Unregistered Character';
-
-    const candInterest = session?.candidates[s.characterName.toLowerCase()];
-    const interestBadge = candInterest
-      ? `\n🙋 **Interest:** \`${candInterest.interest.replace('_', ' ')}\`${candInterest.currentItemNote ? ` (Current: *${candInterest.currentItemNote}*)` : ''}`
-      : '';
-
-    const voters = voteCounts.get(s.characterName.toLowerCase()) ?? [];
-    const votesLine =
-      voters.length > 0 ? `\n🗳️ **Council Votes (${voters.length}):** ${voters.join(', ')}` : '';
 
     const lastMsText =
       s.daysSinceLastMsAward !== undefined
         ? `${s.daysSinceLastMsAward}d ago`
         : 'Never';
+
+    const attendanceText =
+      s.totalTrackedRaids > 0
+        ? `**${s.confirmedRaidSignupsCount}/${s.totalTrackedRaids}** raids (**${s.attendanceRate}%**)`
+        : `**${s.confirmedRaidSignupsCount}** raids`;
 
     const recentGearLines =
       s.recentAwards.length > 0
@@ -249,13 +244,16 @@ export function buildCandidateComparisonEmbed(
             .join('\n')
         : '_No recorded loot in DB_';
 
+    const rankPrefix = ranked.length > 1 ? `${formatRankBadge(s.recommendationRank)} — ` : '';
+
     return {
-      name: `${s.characterName} — ${charMeta}`,
+      name: `${rankPrefix}${s.characterName} — ${charMeta}`,
       value: [
-        `📊 **Obtained Gear:** **${s.msAwardsTotal} MS** / ${s.osAwardsTotal} OS (14d MS: **${s.msAwardsLast14Days}** • 30d MS: **${s.msAwardsLast30Days}**)`,
-        `⏱️ **Last MS Award:** ${lastMsText} • 📅 **Raid Signups:** ${s.confirmedRaidSignupsCount}`,
-        interestBadge,
-        votesLine,
+        ranked.length > 1 && s.recommendationReasons.length > 0
+          ? `💡 **Recommendation (Score ${s.recommendationScore}):** ${s.recommendationReasons.join(' • ')}`
+          : '',
+        `📅 **Raid Attendance:** ${attendanceText} • ⏱️ **Last MS Award:** ${lastMsText}`,
+        `📊 **Prior Loot:** **${s.msAwardsTotal} MS** / ${s.osAwardsTotal} OS (14d MS: **${s.msAwardsLast14Days}** • 30d MS: **${s.msAwardsLast30Days}**)`,
         `**Recent Obtained Gear:**\n${recentGearLines}`,
       ]
         .filter(Boolean)
@@ -266,8 +264,9 @@ export function buildCandidateComparisonEmbed(
 
   if (fields.length === 0) {
     fields.push({
-      name: 'No Candidates Yet',
-      value: 'Click one of the buttons below to express interest in this item and load your obtained gear history for the Loot Council.',
+      name: 'No Eligible Candidates Found',
+      value:
+        'Specify candidate names with `candidates:` (e.g. `/loot council item:[Item] candidates:Bolvar, Magni`), sign up for a raid via `/raid create`, or register characters with `/character register`.',
       inline: false,
     });
   }
@@ -276,13 +275,50 @@ export function buildCandidateComparisonEmbed(
     title,
     description,
     color: PURPLE_EPIC,
-    fields,
+    fields: fields.slice(0, 15),
     footer: {
-      text: session
-        ? `Session ID: ${session.sessionId} • Status: ${session.status}${session.winnerCharacterName ? ` • Winner: ${session.winnerCharacterName}` : ''}`
-        : `${GUILD_NAME} Loot Council Reference • Based on Gargul & Discord Award DB`,
+      text: `${GUILD_NAME} Loot Council Reference • Deliberation in-game via Gargul • Ranked by Attendance & Prior Loot`,
     },
   };
+}
+
+export function buildLootCouncilRecommendationEmbed(params: {
+  itemName: string;
+  itemId?: number;
+  raidContext?: string;
+  roleFilter?: string;
+  summaries: CandidateLootSummary[];
+}): APIEmbed {
+  const ranked = sortCandidatesByRecommendation(params.summaries);
+  const topCandidate = ranked[0];
+
+  const itemHeader = params.itemId
+    ? `**[${params.itemName}]** (Item ID: \`${params.itemId}\`)`
+    : `**[${params.itemName}]**`;
+
+  const podiumLines = ranked.slice(0, 3).map((s, idx) => {
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+    const reasons = s.recommendationReasons.join(' • ');
+    return `${medal} **#${idx + 1} ${s.characterName}** (Score: \`${s.recommendationScore}\`) — *${reasons}*`;
+  });
+
+  const description = [
+    `💎 **Item:** ${itemHeader}`,
+    params.raidContext ? `🏰 **Raid:** ${params.raidContext}` : '',
+    params.roleFilter ? `🎯 **Role Filter:** ${params.roleFilter}` : '',
+    topCandidate
+      ? `\n🏆 **Recommended Recipient:** 🥇 **${topCandidate.characterName}**\n${podiumLines.join('\n')}`
+      : '',
+    `\n_Loot deliberation and rolls are handled in-game with **Gargul**. Recommendations below consider raid attendance and prior obtained loot._`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return buildCandidateComparisonEmbed(
+    `⚖️ Loot Council Recommendation — ${params.itemName}`,
+    description,
+    ranked
+  );
 }
 
 export function buildLootCouncilMessage(
@@ -292,16 +328,24 @@ export function buildLootCouncilMessage(
   embeds: APIEmbed[];
   components: APIActionRowComponent<APIButtonComponent>[];
 } {
+  const ranked = sortCandidatesByRecommendation(summaries);
+  const topCandidate = ranked[0];
+
   const itemHeader = session.itemId
     ? `**[${session.itemName}]** (Item ID: \`${session.itemId}\`)`
     : `**[${session.itemName}]**`;
 
   const description = [
     `💎 **Item Drop:** ${itemHeader}`,
-    session.raidInstance ? `🏰 **Raid:** ${session.raidInstance}${session.boss ? ` (${session.boss})` : ''}` : '',
+    session.raidInstance
+      ? `🏰 **Raid:** ${session.raidInstance}${session.boss ? ` (${session.boss})` : ''}`
+      : '',
+    topCandidate && session.status === 'OPEN'
+      ? `\n🏆 **Top Recommended:** 🥇 **${topCandidate.characterName}** (Score: \`${topCandidate.recommendationScore}\` • ${topCandidate.recommendationReasons.join(' • ')})`
+      : '',
     session.status === 'AWARDED'
       ? `\n🏆 **Awarded To:** **${session.winnerCharacterName}** (${session.awardedSpecType})`
-      : `\nOfficers can review each candidate's obtained gear below, cast council votes, or finalize with \`/loot award character:<winner> item:${session.sessionId}\`.`,
+      : `\nOfficers can review each candidate's attendance & obtained gear below, cast council votes, or finalize with \`/loot award character:<winner> item:${session.sessionId}\`.`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -309,9 +353,11 @@ export function buildLootCouncilMessage(
   const embed = buildCandidateComparisonEmbed(
     `⚖️ Loot Council Deliberation — ${session.itemName}`,
     description,
-    summaries,
-    session
+    ranked
   );
+  embed.footer = {
+    text: `Session ID: ${session.sessionId} • Status: ${session.status}${session.winnerCharacterName ? ` • Winner: ${session.winnerCharacterName}` : ''}`,
+  };
 
   if (session.status !== 'OPEN') {
     return { embeds: [embed], components: [] };

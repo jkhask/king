@@ -208,7 +208,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
   },
   {
     name: 'loot',
-    description: 'Gargul loot imports, obtained gear history, and Loot Council deliberation',
+    description: 'Gargul loot imports, obtained gear history, and Loot Council recommendations',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
@@ -231,7 +231,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'compare',
-        description: 'Compare obtained gear history across multiple characters for Loot Council decisions',
+        description: 'Compare obtained gear history and attendance across multiple characters',
         options: [
           {
             type: ApplicationCommandOptionType.String,
@@ -244,7 +244,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'council',
-        description: 'Start an interactive Loot Council deliberation & voting card for a dropped item',
+        description: 'Show ranked recommendations on who should obtain an item based on raid attendance and prior loot',
         options: [
           {
             type: ApplicationCommandOptionType.String,
@@ -254,14 +254,21 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
           },
           {
             type: ApplicationCommandOptionType.String,
-            name: 'raid',
-            description: 'Raid instance name (e.g. Hyjal Summit, Barrow Deeps)',
+            name: 'candidates',
+            description: 'Comma-separated character names rolling in Gargul (leave blank for active raid/roster)',
             required: false,
           },
           {
             type: ApplicationCommandOptionType.String,
-            name: 'boss',
-            description: 'Boss name',
+            name: 'role',
+            description: 'Filter eligible candidates by Raid Role (Tank, Healer, Melee, Ranged)',
+            required: false,
+            choices: roleChoices,
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'raid',
+            description: 'Raid instance name or Raid ID (e.g. Hyjal Summit, Barrow Deeps)',
             required: false,
           },
         ],
@@ -269,7 +276,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'award',
-        description: 'Manually record a loot award or finalize an open Loot Council session',
+        description: 'Manually record a loot award in the guild database',
         options: [
           {
             type: ApplicationCommandOptionType.String,
@@ -280,7 +287,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
           {
             type: ApplicationCommandOptionType.String,
             name: 'item',
-            description: 'Item name or Loot Council Session ID (e.g. lc-xxxx)',
+            description: 'Item name or WoW item link',
             required: true,
           },
           {
@@ -411,6 +418,22 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
         type: ApplicationCommandOptionType.Subcommand,
         name: 'list',
         description: 'List all open guild crafting and consumable requests',
+      },
+    ],
+  },
+  {
+    name: 'setup',
+    description: 'Configure Discord Class Roles, Welcome Onboarding Card, and Member Nickname Sync',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'discord',
+        description: 'Create/update hoisted WoW Class Roles on Discord and post the Welcome Registration Card',
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'sync-members',
+        description: 'Sync all registered guild members’ Discord nicknames and Class Roles now',
       },
     ],
   },

@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type {
-  CandidateInterestType,
   GuildBankItem,
   GuildRepository,
   GuildRequestTicket,
@@ -40,9 +39,14 @@ import {
   TextInputStyle,
 } from 'discord-api-types/v10';
 import {
+  buildWelcomeOnboardingPayload,
+  ensureGuildClassRoles,
+  syncMemberNicknameAndClassRole,
+} from './discord-rest.js';
+import {
   ALLIANCE_BLUE,
   buildCandidateComparisonEmbed,
-  buildLootCouncilMessage,
+  buildLootCouncilRecommendationEmbed,
   buildRaidEventMessage,
   buildRequestTicketMessage,
   buildRosterSummaryEmbed,
@@ -118,6 +122,8 @@ export async function handleDiscordInteraction(
         return handleBankCommand(guildId, userId, subcommand, options, repo);
       case 'request':
         return handleRequestCommand(guildId, userId, subcommand, options, repo);
+      case 'setup':
+        return handleSetupCommand(guildId, interaction.channel?.id, subcommand, repo);
       default:
         return ephemeralMessage(`Unknown command: \`/${data.name}\``);
     }
@@ -205,6 +211,10 @@ async function handleCharacterCommand(
       updatedAt: now,
     });
 
+    const syncNotes = saved.isMain
+      ? await syncGuildMemberToMain(guildId, userId, saved.name, saved.wowClass, repo)
+      : [];
+
     return {
       type: InteractionResponseType.ChannelMessageWithSource,
       data: {
@@ -218,6 +228,7 @@ async function handleCharacterCommand(
               `**Role:** ${ROLE_ICONS[saved.primaryRole]} **${saved.primaryRole}**${saved.offspecRole ? ` (Off-Spec: ${ROLE_ICONS[saved.offspecRole]} ${saved.offspecRole})` : ''}`,
               saved.professions.length > 0 ? `**Professions:** ${saved.professions.join(', ')}` : '',
               saved.notableRecipes.length > 0 ? `**Notable Recipes:** ${saved.notableRecipes.join(', ')}` : '',
+              ...syncNotes,
             ]
               .filter(Boolean)
               .join('\n'),
@@ -529,34 +540,93 @@ async function handleLootCommand(
   if (subcommand === 'council') {
     const rawItem = String(options.get('item') ?? '');
     const { itemId, itemName } = parseWowItemToken(rawItem);
-    const raidInstance = options.get('raid') ? String(options.get('raid')) : undefined;
-    const boss = options.get('boss') ? String(options.get('boss')) : undefined;
+    const rawCandidates = options.get('candidates') ? String(options.get('candidates')) : '';
+    const roleFilter = options.get('role') ? (String(options.get('role')) as RaidRole) : undefined;
+    const raidOption = options.get('raid') ? String(options.get('raid')).trim() : undefined;
 
-    const sessionId = shortId('lc');
-    const session = await repo.createLootCouncilSession({
-      guildId,
-      sessionId,
+    let raidContext = raidOption;
+    let candidateNames: string[] = [];
+
+    if (rawCandidates.trim()) {
+      candidateNames = rawCandidates
+        .split(/[,;]+/)
+        .map((n) => normalizeCharacterName(n))
+        .filter(Boolean);
+    } else {
+      // Check if there is a matching or recent raid with confirmed/bench signups
+      let targetRaid = raidOption ? await repo.getRaidEvent(guildId, raidOption) : null;
+      if (!targetRaid) {
+        const recentRaids = await repo.listRaidEvents(guildId, 10);
+        if (raidOption) {
+          targetRaid =
+            recentRaids.find((r) => r.name.toLowerCase().includes(raidOption.toLowerCase())) ??
+            recentRaids[0] ??
+            null;
+        } else {
+          targetRaid = recentRaids[0] ?? null;
+        }
+      }
+
+      if (targetRaid) {
+        if (!raidContext) {
+          raidContext = `${targetRaid.name} (${targetRaid.scheduledAt})`;
+        }
+        const signups = await repo.listRaidSignups(guildId, targetRaid.raidId);
+        const attending = signups.filter((s) => {
+          if (s.status !== 'CONFIRMED' && s.status !== 'BENCH') return false;
+          if (roleFilter && s.role !== roleFilter) return false;
+          return true;
+        });
+        candidateNames = attending.map((s) => s.characterName);
+      }
+
+      // Fall back to registered guild characters if no raid signups matched
+      if (candidateNames.length === 0) {
+        const guildChars = await repo.listGuildCharacters(guildId);
+        const mains = guildChars.filter((c) => c.isMain);
+        const pool = mains.length > 0 ? mains : guildChars;
+        candidateNames = pool.map((c) => c.name);
+      }
+
+      // Fall back to recent loot history characters if no characters are registered yet
+      if (candidateNames.length === 0) {
+        const recentHistory = await repo.listGuildLootHistory(guildId, 50);
+        const uniqueChars = new Set<string>();
+        for (const award of recentHistory) {
+          uniqueChars.add(award.characterName);
+        }
+        candidateNames = Array.from(uniqueChars);
+      }
+    }
+
+    let summaries = await repo.getCandidateLootSummaries(guildId, candidateNames);
+
+    if (roleFilter) {
+      summaries = summaries.filter((s) => {
+        if (!s.character) return true;
+        return (
+          s.character.primaryRole === roleFilter || s.character.offspecRole === roleFilter
+        );
+      });
+    }
+
+    const embed = buildLootCouncilRecommendationEmbed({
       itemName,
       itemId,
-      raidInstance,
-      boss,
-      status: 'OPEN',
-      createdByUserId: userId,
-      candidates: {},
-      votes: {},
-      createdAt: new Date().toISOString(),
+      raidContext,
+      roleFilter,
+      summaries,
     });
 
-    const payload = buildLootCouncilMessage(session, []);
     return {
       type: InteractionResponseType.ChannelMessageWithSource,
-      data: payload,
+      data: { embeds: [embed] },
     };
   }
 
   if (subcommand === 'award') {
     const winnerName = normalizeCharacterName(String(options.get('character') ?? ''));
-    const rawItemOrSession = String(options.get('item') ?? '').trim();
+    const rawItem = String(options.get('item') ?? '').trim();
     const specType = (options.get('spec') ? String(options.get('spec')) : 'MS') as LootSpecType;
     const raidInstance = options.get('raid') ? String(options.get('raid')) : undefined;
 
@@ -564,33 +634,7 @@ async function handleLootCommand(
       return ephemeralMessage('❌ Please specify a valid winning character name.');
     }
 
-    // Check if rawItemOrSession matches an active LootCouncilSession ID
-    if (rawItemOrSession.startsWith('lc-')) {
-      const resolved = await repo.resolveLootCouncilSession(
-        guildId,
-        rawItemOrSession,
-        winnerName,
-        specType,
-        userId
-      );
-      if (!resolved) {
-        return ephemeralMessage(`❌ Loot Council session \`${rawItemOrSession}\` was not found.`);
-      }
-
-      const candidateNames = Object.values(resolved.session.candidates).map((c) => c.characterName);
-      if (!candidateNames.some((n) => n.toLowerCase() === winnerName.toLowerCase())) {
-        candidateNames.push(winnerName);
-      }
-      const summaries = await repo.getCandidateLootSummaries(guildId, candidateNames);
-      const payload = buildLootCouncilMessage(resolved.session, summaries);
-      return {
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: payload,
-      };
-    }
-
-    // Otherwise record a direct loot award
-    const { itemId, itemName } = parseWowItemToken(rawItemOrSession);
+    const { itemId, itemName } = parseWowItemToken(rawItem);
     const awardedAt = new Date().toISOString();
     const awardHash = createHash('sha256')
       .update(`${awardedAt.slice(0, 16)}|${winnerName.toLowerCase()}|${(itemId ?? itemName).toString().toLowerCase()}`)
@@ -822,58 +866,6 @@ async function handleMessageComponent(
     };
   }
 
-  if (action === 'lc_interest' && entityId && value) {
-    const userChars = await repo.listUserCharacters(guildId, userId);
-    const mainChar = userChars[0];
-    if (!mainChar) {
-      return ephemeralMessage(
-        '❌ Please register your character with `/character register` before expressing interest on Loot Council items.'
-      );
-    }
-
-    const interest = value as CandidateInterestType;
-    const session = await repo.upsertLootCouncilCandidate(guildId, entityId, {
-      userId,
-      characterName: mainChar.name,
-      wowClass: mainChar.wowClass,
-      interest,
-      updatedAt: new Date().toISOString(),
-    });
-
-    if (!session) {
-      return ephemeralMessage('❌ This Loot Council session is closed or no longer exists.');
-    }
-
-    const activeNames = Object.values(session.candidates)
-      .filter((c) => c.interest !== 'PASS')
-      .map((c) => c.characterName);
-    const summaries = await repo.getCandidateLootSummaries(guildId, activeNames);
-    const updatedMessage = buildLootCouncilMessage(session, summaries);
-
-    return {
-      type: InteractionResponseType.UpdateMessage,
-      data: updatedMessage,
-    };
-  }
-
-  if (action === 'lc_vote' && entityId && value) {
-    const session = await repo.castLootCouncilVote(guildId, entityId, userId, value);
-    if (!session) {
-      return ephemeralMessage('❌ This Loot Council session is closed or no longer exists.');
-    }
-
-    const activeNames = Object.values(session.candidates)
-      .filter((c) => c.interest !== 'PASS')
-      .map((c) => c.characterName);
-    const summaries = await repo.getCandidateLootSummaries(guildId, activeNames);
-    const updatedMessage = buildLootCouncilMessage(session, summaries);
-
-    return {
-      type: InteractionResponseType.UpdateMessage,
-      data: updatedMessage,
-    };
-  }
-
   if (action === 'req_action' && entityId && value) {
     const status = value as GuildRequestTicket['status'];
     const updated = await repo.updateRequestTicketStatus(guildId, entityId, status, userId);
@@ -888,6 +880,72 @@ async function handleMessageComponent(
     };
   }
 
+  if (customId === 'onboard_open_modal') {
+    return {
+      type: InteractionResponseType.Modal,
+      data: {
+        custom_id: 'modal_onboard_register',
+        title: `Register Main Character (${GUILD_NAME})`,
+        components: [
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.TextInput,
+                custom_id: 'onboard_char_name',
+                label: 'Character Name (Sets your Server Nickname)',
+                style: TextInputStyle.Short,
+                placeholder: 'e.g. Bolvar',
+                min_length: 2,
+                max_length: 16,
+                required: true,
+              },
+            ],
+          },
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.TextInput,
+                custom_id: 'onboard_race',
+                label: 'Alliance Race',
+                style: TextInputStyle.Short,
+                placeholder: 'Human, Dwarf, Night Elf, Gnome, or High Order Skyborne',
+                required: true,
+              },
+            ],
+          },
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.TextInput,
+                custom_id: 'onboard_class',
+                label: 'WoW Class (Sets your Discord Class Group)',
+                style: TextInputStyle.Short,
+                placeholder: 'Warrior, Paladin, Hunter, Rogue, Priest, Shaman, Mage, Warlock, Druid',
+                required: true,
+              },
+            ],
+          },
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.TextInput,
+                custom_id: 'onboard_role',
+                label: 'Primary Raid Role',
+                style: TextInputStyle.Short,
+                placeholder: 'Tank, Healer, Melee, or Ranged',
+                required: true,
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
   return ephemeralMessage('Unknown button interaction.');
 }
 
@@ -897,6 +955,97 @@ async function handleModalSubmit(
   data: APIModalSubmission,
   repo: GuildRepository
 ): Promise<APIInteractionResponse> {
+  if (data.custom_id === 'modal_onboard_register') {
+    let rawName = '';
+    let rawRace = '';
+    let rawClass = '';
+    let rawRole = '';
+
+    for (const row of data.components) {
+      for (const comp of row.components) {
+        if (comp.custom_id === 'onboard_char_name') rawName = comp.value ?? '';
+        else if (comp.custom_id === 'onboard_race') rawRace = comp.value ?? '';
+        else if (comp.custom_id === 'onboard_class') rawClass = comp.value ?? '';
+        else if (comp.custom_id === 'onboard_role') rawRole = comp.value ?? '';
+      }
+    }
+
+    const name = normalizeCharacterName(rawName);
+    const race = matchAllianceRace(rawRace);
+    const wowClass = matchWowClass(rawClass);
+    const primaryRole = matchRaidRole(rawRole);
+
+    if (!name || name.length < 2 || name.length > 16) {
+      return ephemeralMessage('❌ Character name must be between 2 and 16 characters.');
+    }
+    if (!race) {
+      return ephemeralMessage(
+        '❌ Unrecognized Alliance race. Choose from: **Human, Dwarf, Night Elf, Gnome, High Order Skyborne**.'
+      );
+    }
+    if (!wowClass) {
+      return ephemeralMessage(
+        '❌ Unrecognized class. Choose from: **Warrior, Paladin, Hunter, Rogue, Priest, Shaman, Mage, Warlock, Druid**.'
+      );
+    }
+    if (!primaryRole) {
+      return ephemeralMessage(
+        '❌ Unrecognized role. Choose from: **Tank, Healer, Melee, Ranged**.'
+      );
+    }
+
+    if (!isValidRaceClass(race, wowClass)) {
+      const validClasses = VALID_RACE_CLASSES[race]?.join(', ') ?? 'None';
+      return ephemeralMessage(
+        `❌ **${race} ${wowClass}** is not a valid combination in *WoW: Forever*.\nValid classes for **${race}**: ${validClasses}`
+      );
+    }
+
+    if (!isValidRoleForClass(wowClass, primaryRole)) {
+      const validRoles = CLASS_VIABLE_ROLES[wowClass]?.join(', ') ?? 'None';
+      return ephemeralMessage(
+        `❌ **${wowClass}** cannot use primary role **${primaryRole}**.\nViable roles for **${wowClass}**: ${validRoles}`
+      );
+    }
+
+    const now = new Date().toISOString();
+    const saved = await repo.upsertCharacter({
+      guildId,
+      userId,
+      name,
+      race,
+      wowClass,
+      primaryRole,
+      isMain: true,
+      professions: [],
+      notableRecipes: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const syncNotes = await syncGuildMemberToMain(guildId, userId, saved.name, saved.wowClass, repo);
+
+    return {
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: {
+        embeds: [
+          {
+            title: `🦁 Welcome ${saved.name} — Character Registered!`,
+            description: [
+              `Member: <@${userId}>`,
+              `**Race & Class:** ${saved.race} ${CLASS_ICONS[saved.wowClass]} **${saved.wowClass}**`,
+              `**Primary Role:** ${ROLE_ICONS[saved.primaryRole]} **${saved.primaryRole}**`,
+              ...syncNotes,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            color: ALLIANCE_BLUE,
+          },
+        ],
+      },
+    };
+  }
+
   if (data.custom_id === 'modal_gargul_import') {
     let defaultRaidInstance = '';
     let rawExport = '';
@@ -969,3 +1118,188 @@ async function handleModalSubmit(
 
   return ephemeralMessage('Unknown modal submission.');
 }
+
+async function handleSetupCommand(
+  guildId: string,
+  channelId: string | undefined,
+  subcommand: string,
+  repo: GuildRepository
+): Promise<APIInteractionResponse> {
+  if (subcommand === 'discord') {
+    const existingConfig = await repo.getGuildConfig(guildId);
+    const roleSetup = await ensureGuildClassRoles(guildId, existingConfig?.classRoleIds);
+
+    await repo.upsertGuildConfig({
+      guildId,
+      welcomeChannelId: channelId ?? existingConfig?.welcomeChannelId,
+      classRoleIds: roleSetup.roleMap,
+      welcomedUserIds: existingConfig?.welcomedUserIds ?? [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    const welcomePayload = buildWelcomeOnboardingPayload();
+    const setupSummaryEmbed = {
+      title: '⚙️ Discord Server Configured for Diminishing Returns',
+      description: [
+        `✅ **Hoisted Class Roles Ready:** ${Object.keys(roleSetup.roleMap).length} / 9 classes (${roleSetup.created.length} created, ${roleSetup.updated.length} updated)`,
+        channelId ? `✅ **Welcome & Onboarding Channel Set:** <#${channelId}>` : '',
+        `💡 **Tip:** In Discord **Server Settings → Roles**, make sure the **Diminishing Returns** bot role is dragged **above** the 9 WoW Class Roles so it has permission to assign them and update member nicknames!`,
+        roleSetup.errors.length > 0 ? `⚠️ **Notes:** ${roleSetup.errors.join('; ')}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      color: GOLD_COLOR,
+    };
+
+    return {
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: {
+        embeds: [setupSummaryEmbed, ...welcomePayload.embeds],
+        components: welcomePayload.components,
+      },
+    };
+  }
+
+  if (subcommand === 'sync-members') {
+    const existingConfig = await repo.getGuildConfig(guildId);
+    const roleSetup = await ensureGuildClassRoles(guildId, existingConfig?.classRoleIds);
+
+    await repo.upsertGuildConfig({
+      guildId,
+      welcomeChannelId: existingConfig?.welcomeChannelId,
+      classRoleIds: roleSetup.roleMap,
+      welcomedUserIds: existingConfig?.welcomedUserIds ?? [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    const allChars = await repo.listGuildCharacters(guildId);
+    const mains = allChars.filter((c) => c.isMain);
+
+    let nickCount = 0;
+    let roleCount = 0;
+    for (const main of mains) {
+      const res = await syncMemberNicknameAndClassRole({
+        guildId,
+        userId: main.userId,
+        characterName: main.name,
+        wowClass: main.wowClass,
+        classRoleIds: roleSetup.roleMap,
+      });
+      if (res.nicknameSynced) nickCount++;
+      if (res.roleSynced) roleCount++;
+    }
+
+    return {
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: {
+        embeds: [
+          {
+            title: '🔄 Guild Member Nicknames & Class Roles Synced',
+            description: [
+              `**Main Characters Checked:** ${mains.length}`,
+              `🏷️ **Discord Nicknames Updated:** ${nickCount}`,
+              `🛡️ **Class Roles Assigned:** ${roleCount}`,
+              mains.length > nickCount
+                ? `_(Note: Discord prevents bots from changing the Server Owner's nickname—the owner must rename themselves manually, though their Class Role is still assigned!)_`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            color: ALLIANCE_BLUE,
+          },
+        ],
+      },
+    };
+  }
+
+  return ephemeralMessage('Unknown `/setup` subcommand.');
+}
+
+async function syncGuildMemberToMain(
+  guildId: string,
+  userId: string,
+  characterName: string,
+  wowClass: WowClass,
+  repo: GuildRepository
+): Promise<string[]> {
+  try {
+    let config = await repo.getGuildConfig(guildId);
+    let classRoleIds = config?.classRoleIds ?? {};
+
+    // If the guild hasn't run /setup discord yet, provision the 9 hoisted class roles automatically
+    if (!classRoleIds[wowClass]) {
+      const ensured = await ensureGuildClassRoles(guildId, classRoleIds);
+      classRoleIds = ensured.roleMap;
+      config = await repo.upsertGuildConfig({
+        guildId,
+        welcomeChannelId: config?.welcomeChannelId,
+        classRoleIds,
+        welcomedUserIds: config?.welcomedUserIds ?? [],
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    const syncRes = await syncMemberNicknameAndClassRole({
+      guildId,
+      userId,
+      characterName,
+      wowClass,
+      classRoleIds,
+    });
+
+    const messages: string[] = [];
+    if (syncRes.nicknameSynced) {
+      messages.push(`🏷️ **Discord Nickname:** Updated to \`${characterName}\``);
+    }
+    if (syncRes.roleSynced) {
+      messages.push(`🛡️ **Discord Class Group:** Assigned **@${wowClass}**`);
+    }
+    for (const note of syncRes.notes) {
+      messages.push(`ℹ️ _${note}_`);
+    }
+    return messages;
+  } catch {
+    return [];
+  }
+}
+
+function matchAllianceRace(raw: string): WowRace | null {
+  const lower = raw.trim().toLowerCase();
+  if (lower === 'human') return 'Human';
+  if (lower === 'dwarf') return 'Dwarf';
+  if (lower === 'night elf' || lower === 'nightelf' || lower === 'nelf' || lower === 'ne') return 'Night Elf';
+  if (lower === 'gnome') return 'Gnome';
+  if (lower.includes('skyborne') || lower.includes('high order')) return 'High Order Skyborne';
+  return null;
+}
+
+function matchWowClass(raw: string): WowClass | null {
+  const lower = raw.trim().toLowerCase();
+  const map: Record<string, WowClass> = {
+    warrior: 'Warrior',
+    war: 'Warrior',
+    paladin: 'Paladin',
+    pally: 'Paladin',
+    hunter: 'Hunter',
+    hunt: 'Hunter',
+    rogue: 'Rogue',
+    priest: 'Priest',
+    shaman: 'Shaman',
+    sham: 'Shaman',
+    mage: 'Mage',
+    warlock: 'Warlock',
+    lock: 'Warlock',
+    druid: 'Druid',
+  };
+  return map[lower] ?? null;
+}
+
+function matchRaidRole(raw: string): RaidRole | null {
+  const lower = raw.trim().toLowerCase();
+  if (lower.startsWith('tank')) return 'Tank';
+  if (lower.startsWith('heal')) return 'Healer';
+  if (lower.startsWith('melee') || lower === 'mdps') return 'Melee';
+  if (lower.startsWith('range') || lower === 'rdps' || lower === 'caster') return 'Ranged';
+  return null;
+}
+

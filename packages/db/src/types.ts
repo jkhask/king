@@ -105,6 +105,11 @@ export interface CandidateLootSummary {
   daysSinceLastMsAward?: number;
   recentAwards: ObtainedGearAward[];
   confirmedRaidSignupsCount: number;
+  totalTrackedRaids: number;
+  attendanceRate: number;
+  recommendationScore: number;
+  recommendationRank: number;
+  recommendationReasons: string[];
 }
 
 export interface GuildBankItem {
@@ -132,7 +137,20 @@ export interface GuildRequestTicket {
   updatedAt: string;
 }
 
+export interface GuildConfig {
+  guildId: string;
+  welcomeChannelId?: string;
+  classRoleIds: Record<string, string>; // WowClass -> Discord Role ID
+  welcomedUserIds: string[];
+  updatedAt: string;
+}
+
 export interface GuildRepository {
+  // Guild Config & Onboarding
+  getGuildConfig(guildId: string): Promise<GuildConfig | null>;
+  upsertGuildConfig(config: GuildConfig): Promise<GuildConfig>;
+  listConfiguredGuilds(): Promise<GuildConfig[]>;
+
   // Character & Roster
   upsertCharacter(char: GuildCharacter): Promise<GuildCharacter>;
   getCharacterByName(guildId: string, characterName: string): Promise<GuildCharacter | null>;

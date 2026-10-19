@@ -4,6 +4,8 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigwv2Integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -69,12 +71,13 @@ export class DiminishingReturnsStack extends cdk.Stack {
       entry: botEntryPath,
       handler: 'handler',
       memorySize: 256,
-      timeout: cdk.Duration.seconds(10),
-      description: 'Diminishing Returns (WoW: Forever) Discord HTTP Interactions Handler',
+      timeout: cdk.Duration.seconds(15),
+      description: 'Diminishing Returns (WoW: Forever) Discord HTTP Interactions & Onboarding Handler',
       environment: {
         NODE_OPTIONS: '--enable-source-maps',
         DR_TABLE_NAME: this.guildTable.tableName,
         DISCORD_PUBLIC_KEY_SSM_PARAM: discordPublicKeyParam.parameterName,
+        DISCORD_BOT_TOKEN_SSM_PARAM: '/dr/discord/bot-token',
       },
       bundling: {
         format: nodejs.OutputFormat.ESM,
@@ -115,7 +118,14 @@ export class DiminishingReturnsStack extends cdk.Stack {
       ),
     });
 
-    // 5. CloudFormation Outputs
+    // 5. Amazon EventBridge Rule: Check for newly joined members every 2 minutes to DM/welcome them
+    new events.Rule(this, 'NewMemberOnboardingScheduleRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
+      description: 'Polls configured Discord guilds for new unregistered members and sends a registration prompt',
+      targets: [new targets.LambdaFunction(this.interactionFunction)],
+    });
+
+    // 6. CloudFormation Outputs
     new cdk.CfnOutput(this, 'InteractionsEndpointUrl', {
       value: `${this.httpApi.apiEndpoint}/interactions`,
       description:

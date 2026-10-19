@@ -66,6 +66,6 @@ pnpm register-commands
 - **`/raid create | view | list`**: Schedule 10m (*Barrow Deeps*), 20m (*Hyjal Summit*), or 40m (*Onyxia's Lair*) raids with one-click signup buttons.
 - **`/loot import-gargul`**: Opens a Discord Modal to paste a **Gargul** export string (CSV/TSV/JSON) and log obtained gear into DynamoDB.
 - **`/loot history | compare | council | award`**:
-  - Reference obtained gear in DynamoDB for any character or compare multiple candidates side-by-side (14d/30d MS counts, days since last MS drop, recent items won, and raid signups).
-  - Run live interactive **Loot Council** deliberation cards where raiders click **Main Spec / Big Upgrade**, **Minor Upgrade**, **Off-Spec**, or **Pass**, and officers vote and award the item.
+  - Reference obtained gear in DynamoDB for any character or compare multiple candidates side-by-side (14d/30d MS counts, days since last MS drop, recent items won, and raid attendance).
+  - Run `/loot council` to get ranked recommendations on who should obtain a dropped item based on **raid attendance** and **prior loot** while handling roll/loot deliberation in-game with **Gargul**.
 - **`/bank search | set`** & **`/request create | list`**: Track Guild Bank stock and manage interactive crafting/consumable request tickets.

@@ -57,19 +57,18 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(res).toEqual({ type: InteractionResponseType.Pong });
   });
 
-  it('registers an Alliance character, imports Gargul loot via Modal, and runs Loot Council deliberation', async () => {
+  it('registers Alliance characters, tracks raid attendance, imports Gargul loot, and shows /loot council recommendations', async () => {
     const repo = new InMemoryGuildRepository();
     const guildId = 'guild-dr';
-    const userId = 'player-1';
 
-    // 1. Register a Dwarf Shaman (new WoW: Forever Alliance combo)
-    const regRes = await handleDiscordInteraction(
+    // 1. Register two Healers: Falstad (Dwarf Shaman) and Tyrande (Night Elf Priest)
+    const regFalstad = await handleDiscordInteraction(
       {
         id: '2',
         application_id: 'app',
         type: InteractionType.ApplicationCommand,
         guild_id: guildId,
-        member: { user: { id: userId } },
+        member: { user: { id: 'player-1' } },
         data: {
           id: 'cmd-1',
           name: 'character',
@@ -92,12 +91,73 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       } as unknown as APIInteraction,
       repo
     );
+    expect(regFalstad.type).toBe(InteractionResponseType.ChannelMessageWithSource);
 
-    expect(regRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
-    const char = await repo.getCharacterByName(guildId, 'Falstad');
-    expect(char?.wowClass).toBe('Shaman');
+    await handleDiscordInteraction(
+      {
+        id: '2b',
+        application_id: 'app',
+        type: InteractionType.ApplicationCommand,
+        guild_id: guildId,
+        member: { user: { id: 'player-2' } },
+        data: {
+          id: 'cmd-1b',
+          name: 'character',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              type: ApplicationCommandOptionType.Subcommand,
+              name: 'register',
+              options: [
+                { type: ApplicationCommandOptionType.String, name: 'name', value: 'tyrande' },
+                { type: ApplicationCommandOptionType.String, name: 'race', value: 'Night Elf' },
+                { type: ApplicationCommandOptionType.String, name: 'class', value: 'Priest' },
+                { type: ApplicationCommandOptionType.String, name: 'role', value: 'Healer' },
+              ],
+            },
+          ],
+        },
+        token: 'tok',
+        version: 1,
+      } as unknown as APIInteraction,
+      repo
+    );
 
-    // 2. Submit Gargul Loot Import Modal
+    // 2. Create a raid and record Tyrande attending
+    const raid = await repo.createRaidEvent({
+      guildId,
+      raidId: 'raid-hyjal-1',
+      templateId: 'hyjal-summit',
+      name: 'Hyjal Summit',
+      size: 20,
+      scheduledAt: 'Wed 8:00 PM EST',
+      createdByUserId: 'officer-1',
+      status: 'OPEN',
+      createdAt: new Date().toISOString(),
+    });
+    await repo.upsertRaidSignup({
+      guildId,
+      raidId: raid.raidId,
+      userId: 'player-2',
+      characterName: 'Tyrande',
+      wowClass: 'Priest',
+      role: 'Healer',
+      status: 'CONFIRMED',
+      updatedAt: new Date().toISOString(),
+    });
+    await repo.upsertRaidSignup({
+      guildId,
+      raidId: raid.raidId,
+      userId: 'player-1',
+      characterName: 'Falstad',
+      wowClass: 'Shaman',
+      role: 'Healer',
+      status: 'CONFIRMED',
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 3. Submit Gargul Loot Import Modal (Falstad already won an MS item today)
+    const todayIso = new Date().toISOString().slice(0, 10);
     const modalRes = await handleDiscordInteraction(
       {
         id: '3',
@@ -124,8 +184,7 @@ describe('Diminishing Returns Bot Interaction Router', () => {
                 {
                   type: ComponentType.TextInput,
                   custom_id: 'gargul_export_payload',
-                  value:
-                    'dateTime,player,itemID,itemName,offspec\n2026-12-10,Falstad,18803,[Finkle\'s Lava Dredger],0',
+                  value: `dateTime,player,itemID,itemName,offspec\n${todayIso},Falstad,18803,[Finkle's Lava Dredger],0`,
                 },
               ],
             },
@@ -142,8 +201,8 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(lootHistory).toHaveLength(1);
     expect(lootHistory[0].itemName).toBe("Finkle's Lava Dredger");
 
-    // 3. Start a Loot Council session for a new drop
-    const lcStartRes = await handleDiscordInteraction(
+    // 4. Run /loot council for [Rejuvenating Gem] -> should recommend Tyrande (#1) over Falstad (#2)
+    const lcRes = await handleDiscordInteraction(
       {
         id: '4',
         application_id: 'app',
@@ -166,8 +225,8 @@ describe('Diminishing Returns Bot Interaction Router', () => {
                 },
                 {
                   type: ApplicationCommandOptionType.String,
-                  name: 'raid',
-                  value: 'Hyjal Summit',
+                  name: 'candidates',
+                  value: 'Falstad, Tyrande',
                 },
               ],
             },
@@ -179,26 +238,34 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       repo
     );
 
-    expect(lcStartRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
-    const footerText =
-      'data' in lcStartRes && lcStartRes.data && 'embeds' in lcStartRes.data
-        ? lcStartRes.data.embeds?.[0]?.footer?.text ?? ''
-        : '';
-    const sessionMatch = footerText.match(/Session ID: (lc-[a-f0-9]+)/);
-    expect(sessionMatch).toBeTruthy();
-    const sessionId = sessionMatch![1];
+    expect(lcRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
+    const resData = 'data' in lcRes ? lcRes.data : undefined;
+    const embed = resData && 'embeds' in resData ? resData.embeds?.[0] : undefined;
+    expect(embed?.title).toContain('Loot Council Recommendation — Rejuvenating Gem');
+    expect(embed?.description).toContain('Recommended Recipient:** 🥇 **Tyrande**');
+    expect(embed?.fields?.[0]?.name).toContain('🥇 #1 Recommended — Tyrande');
+    expect(embed?.fields?.[1]?.name).toContain('🥈 #2 Recommended — Falstad');
+    expect(embed?.fields?.[1]?.value).toContain("Finkle's Lava Dredger");
+    // No interactive buttons since deliberation happens in-game with Gargul
+    expect(resData && 'components' in resData ? resData.components : undefined).toBeUndefined();
+  });
 
-    // 4. Player clicks "Main Spec / Big Upgrade" button on the Loot Council embed
-    const btnRes = await handleDiscordInteraction(
+  it('opens the onboarding character registration modal and registers a main character', async () => {
+    const repo = new InMemoryGuildRepository();
+    const guildId = 'guild-dr';
+    const userId = 'new-member-1';
+
+    // 1. Click "Register Main Character" button on the Welcome card
+    const openModalRes = await handleDiscordInteraction(
       {
-        id: '5',
+        id: '10',
         application_id: 'app',
         type: InteractionType.MessageComponent,
         guild_id: guildId,
         member: { user: { id: userId } },
         data: {
           component_type: ComponentType.Button,
-          custom_id: `lc_interest:${sessionId}:BIG_UPGRADE`,
+          custom_id: 'onboard_open_modal',
         },
         token: 'tok',
         version: 1,
@@ -206,12 +273,51 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       repo
     );
 
-    expect(btnRes.type).toBe(InteractionResponseType.UpdateMessage);
-    const updatedEmbed =
-      'data' in btnRes && btnRes.data && 'embeds' in btnRes.data
-        ? btnRes.data.embeds?.[0]
-        : undefined;
-    expect(updatedEmbed?.fields?.[0]?.name).toContain('Falstad');
-    expect(updatedEmbed?.fields?.[0]?.value).toContain("Finkle's Lava Dredger");
+    expect(openModalRes.type).toBe(InteractionResponseType.Modal);
+
+    // 2. Submit the Onboarding Modal
+    const submitRes = await handleDiscordInteraction(
+      {
+        id: '11',
+        application_id: 'app',
+        type: InteractionType.ModalSubmit,
+        guild_id: guildId,
+        member: { user: { id: userId } },
+        data: {
+          custom_id: 'modal_onboard_register',
+          components: [
+            {
+              type: ComponentType.ActionRow,
+              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_char_name', value: 'turalyon' }],
+            },
+            {
+              type: ComponentType.ActionRow,
+              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_race', value: 'Human' }],
+            },
+            {
+              type: ComponentType.ActionRow,
+              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_class', value: 'Paladin' }],
+            },
+            {
+              type: ComponentType.ActionRow,
+              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_role', value: 'Tank' }],
+            },
+          ],
+        },
+        token: 'tok',
+        version: 1,
+      } as unknown as APIInteraction,
+      repo
+    );
+
+    expect(submitRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
+    const saved = await repo.getCharacterByName(guildId, 'Turalyon');
+    expect(saved).toMatchObject({
+      name: 'Turalyon',
+      race: 'Human',
+      wowClass: 'Paladin',
+      primaryRole: 'Tank',
+      isMain: true,
+    });
   });
 });

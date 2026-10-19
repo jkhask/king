@@ -5,6 +5,7 @@ import type {
   CandidateLootSummary,
   GuildBankItem,
   GuildCharacter,
+  GuildConfig,
   GuildRepository,
   GuildRequestTicket,
   LootCouncilCandidateInterest,
@@ -15,6 +16,7 @@ import type {
 } from './types.js';
 
 export class InMemoryGuildRepository implements GuildRepository {
+  private guildConfigs = new Map<string, GuildConfig>(); // `${guildId}`
   private characters = new Map<string, GuildCharacter>(); // `${guildId}#${nameLower}`
   private raids = new Map<string, RaidEvent>(); // `${guildId}#${raidId}`
   private signups = new Map<string, RaidSignup>(); // `${guildId}#${raidId}#${userId}`
@@ -22,6 +24,19 @@ export class InMemoryGuildRepository implements GuildRepository {
   private lcSessions = new Map<string, LootCouncilSession>(); // `${guildId}#${sessionId}`
   private bankItems = new Map<string, GuildBankItem>(); // `${guildId}#${category}#${itemLower}`
   private requests = new Map<string, GuildRequestTicket>(); // `${guildId}#${requestId}`
+
+  async getGuildConfig(guildId: string): Promise<GuildConfig | null> {
+    return this.guildConfigs.get(guildId) ?? null;
+  }
+
+  async upsertGuildConfig(config: GuildConfig): Promise<GuildConfig> {
+    this.guildConfigs.set(config.guildId, config);
+    return config;
+  }
+
+  async listConfiguredGuilds(): Promise<GuildConfig[]> {
+    return Array.from(this.guildConfigs.values());
+  }
 
   async upsertCharacter(char: GuildCharacter): Promise<GuildCharacter> {
     const normalizedName = normalizeCharacterName(char.name);
