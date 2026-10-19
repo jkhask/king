@@ -208,7 +208,7 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
   },
   {
     name: 'loot',
-    description: 'Gargul loot imports, obtained gear history, and Loot Council recommendations',
+    description: 'Import Gargul raid loot exports and view obtained gear history',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
@@ -225,138 +225,6 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
             name: 'character',
             description: 'Character name (leave blank for recent guild-wide loot history)',
             required: false,
-          },
-        ],
-      },
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'compare',
-        description: 'Compare obtained gear history and attendance across multiple characters',
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'characters',
-            description: 'Comma-separated character names to compare (e.g. "Bolvar, Magni, Tyrande")',
-            required: true,
-          },
-        ],
-      },
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'council',
-        description: 'Show ranked recommendations on who should obtain an item based on raid attendance and prior loot',
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'item',
-            description: 'Item name or WoW item link',
-            required: true,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'candidates',
-            description: 'Comma-separated character names rolling in Gargul (leave blank for active raid/roster)',
-            required: false,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'role',
-            description: 'Filter eligible candidates by Raid Role (Tank, Healer, Melee, Ranged)',
-            required: false,
-            choices: roleChoices,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'raid',
-            description: 'Raid instance name or Raid ID (e.g. Hyjal Summit, Barrow Deeps)',
-            required: false,
-          },
-        ],
-      },
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'award',
-        description: 'Manually record a loot award in the guild database',
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'character',
-            description: 'Winning character name',
-            required: true,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'item',
-            description: 'Item name or WoW item link',
-            required: true,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'spec',
-            description: 'Award spec type (MS, OS, SR)',
-            required: false,
-            choices: [
-              { name: 'Main Spec (MS)', value: 'MS' },
-              { name: 'Off Spec (OS)', value: 'OS' },
-              { name: 'Soft Reserve (SR)', value: 'SR' },
-            ],
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'raid',
-            description: 'Optional raid instance',
-            required: false,
-          },
-        ],
-      },
-    ],
-  },
-  {
-    name: 'bank',
-    description: 'Manage and search Diminishing Returns Guild Bank inventory',
-    options: [
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'search',
-        description: 'Search Guild Bank inventory by item name or category',
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'query',
-            description: 'Search keyword (leave blank to list all stock)',
-            required: false,
-          },
-        ],
-      },
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'set',
-        description: 'Update the quantity of an item in the Guild Bank (set 0 to remove)',
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'item',
-            description: 'Item name',
-            required: true,
-          },
-          {
-            type: ApplicationCommandOptionType.Integer,
-            name: 'quantity',
-            description: 'New total quantity in Guild Bank (0 removes item)',
-            required: true,
-          },
-          {
-            type: ApplicationCommandOptionType.String,
-            name: 'category',
-            description: 'Bank category',
-            required: false,
-            choices: [
-              { name: 'Consumable', value: 'Consumable' },
-              { name: 'Material', value: 'Material' },
-              { name: 'Recipe', value: 'Recipe' },
-              { name: 'Equipment', value: 'Equipment' },
-              { name: 'Other', value: 'Other' },
-            ],
           },
         ],
       },
@@ -379,7 +247,6 @@ export const SLASH_COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] =
             choices: [
               { name: 'Crafting / Enchanting Request', value: 'CRAFTING' },
               { name: 'Raid Consumable Request', value: 'CONSUMABLE' },
-              { name: 'Guild Bank Withdrawal', value: 'BANK_WITHDRAW' },
             ],
           },
           {

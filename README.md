@@ -64,8 +64,8 @@ pnpm register-commands
 - **`/character register | list | delete`**: Register your Main and Alt Alliance characters, roles, professions, and notable recipes.
 - **`/roster summary | crafters`**: View class/role breakdown across the guild or search crafters by profession/recipe.
 - **`/raid create | view | list`**: Schedule 10m (*Barrow Deeps*), 20m (*Hyjal Summit*), or 40m (*Onyxia's Lair*) raids with one-click signup buttons.
-- **`/loot import-gargul`**: Opens a Discord Modal to paste a **Gargul** export string (CSV/TSV/JSON) and log obtained gear into DynamoDB.
-- **`/loot history | compare | council | award`**:
-  - Reference obtained gear in DynamoDB for any character or compare multiple candidates side-by-side (14d/30d MS counts, days since last MS drop, recent items won, and raid attendance).
-  - Run `/loot council` to get ranked recommendations on who should obtain a dropped item based on **raid attendance** and **prior loot** while handling roll/loot deliberation in-game with **Gargul**.
-- **`/bank search | set`** & **`/request create | list`**: Track Guild Bank stock and manage interactive crafting/consumable request tickets.
+- **`/loot import-gargul | history`**:
+  - Paste a **Gargul** export string (CSV/TSV/JSON) via modal to log obtained gear into DynamoDB.
+  - View obtained gear history for a specific character or recent guild-wide drops (full loot/DB explorer planned for the companion web app).
+- **`/request create | list`**: Manage interactive crafting and consumable request tickets.
+- **`/setup discord | sync-members`**: Provision hoisted WoW Class Roles, post the Welcome Registration Card, and sync member nicknames/roles.

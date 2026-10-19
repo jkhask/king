@@ -201,8 +201,8 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(lootHistory).toHaveLength(1);
     expect(lootHistory[0].itemName).toBe("Finkle's Lava Dredger");
 
-    // 4. Run /loot council for [Rejuvenating Gem] -> should recommend Tyrande (#1) over Falstad (#2)
-    const lcRes = await handleDiscordInteraction(
+    // 4. Run /loot history for Falstad -> should display obtained gear history and attendance
+    const histRes = await handleDiscordInteraction(
       {
         id: '4',
         application_id: 'app',
@@ -216,17 +216,12 @@ describe('Diminishing Returns Bot Interaction Router', () => {
           options: [
             {
               type: ApplicationCommandOptionType.Subcommand,
-              name: 'council',
+              name: 'history',
               options: [
                 {
                   type: ApplicationCommandOptionType.String,
-                  name: 'item',
-                  value: '[Rejuvenating Gem]',
-                },
-                {
-                  type: ApplicationCommandOptionType.String,
-                  name: 'candidates',
-                  value: 'Falstad, Tyrande',
+                  name: 'character',
+                  value: 'Falstad',
                 },
               ],
             },
@@ -238,16 +233,11 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       repo
     );
 
-    expect(lcRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
-    const resData = 'data' in lcRes ? lcRes.data : undefined;
+    expect(histRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
+    const resData = 'data' in histRes ? histRes.data : undefined;
     const embed = resData && 'embeds' in resData ? resData.embeds?.[0] : undefined;
-    expect(embed?.title).toContain('Loot Council Recommendation — Rejuvenating Gem');
-    expect(embed?.description).toContain('Recommended Recipient:** 🥇 **Tyrande**');
-    expect(embed?.fields?.[0]?.name).toContain('🥇 #1 Recommended — Tyrande');
-    expect(embed?.fields?.[1]?.name).toContain('🥈 #2 Recommended — Falstad');
-    expect(embed?.fields?.[1]?.value).toContain("Finkle's Lava Dredger");
-    // No interactive buttons since deliberation happens in-game with Gargul
-    expect(resData && 'components' in resData ? resData.components : undefined).toBeUndefined();
+    expect(embed?.title).toContain('Obtained Gear History — Falstad');
+    expect(embed?.fields?.[0]?.value).toContain("Finkle's Lava Dredger");
   });
 
   it('opens the onboarding character registration modal and registers a main character', async () => {

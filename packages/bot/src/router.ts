@@ -1,6 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type {
-  GuildBankItem,
   GuildRepository,
   GuildRequestTicket,
   ObtainedGearAward,
@@ -12,11 +11,9 @@ import {
   GUILD_NAME,
   isValidRaceClass,
   isValidRoleForClass,
-  type LootSpecType,
   normalizeCharacterName,
   type Profession,
   parseGargulExport,
-  parseWowItemToken,
   type RaidRole,
   ROLE_ICONS,
   VALID_RACE_CLASSES,
@@ -46,7 +43,6 @@ import {
 import {
   ALLIANCE_BLUE,
   buildCandidateComparisonEmbed,
-  buildLootCouncilRecommendationEmbed,
   buildRaidEventMessage,
   buildRequestTicketMessage,
   buildRosterSummaryEmbed,
@@ -117,9 +113,7 @@ export async function handleDiscordInteraction(
       case 'raid':
         return handleRaidCommand(guildId, userId, interaction.channel?.id, subcommand, options, repo);
       case 'loot':
-        return handleLootCommand(guildId, userId, subcommand, options, repo);
-      case 'bank':
-        return handleBankCommand(guildId, userId, subcommand, options, repo);
+        return handleLootCommand(guildId, subcommand, options, repo);
       case 'request':
         return handleRequestCommand(guildId, userId, subcommand, options, repo);
       case 'setup':
@@ -430,7 +424,6 @@ async function handleRaidCommand(
 
 async function handleLootCommand(
   guildId: string,
-  userId: string,
   subcommand: string,
   options: Map<string, string | number | boolean>,
   repo: GuildRepository
@@ -496,7 +489,7 @@ async function handleLootCommand(
             (a) =>
               `• \`${a.awardedAt.slice(0, 10)}\` — **${a.characterName}** received **[${a.itemName}]** (${a.specType}${a.raidInstance ? ` • ${a.raidInstance}` : ''})`
           )
-        : ['_No loot history recorded yet. Use `/loot import-gargul` or `/loot award` to log drops._'];
+        : ['_No loot history recorded yet. Use `/loot import-gargul` to log drops._'];
 
     return {
       type: InteractionResponseType.ChannelMessageWithSource,
@@ -512,227 +505,7 @@ async function handleLootCommand(
     };
   }
 
-  if (subcommand === 'compare') {
-    const rawList = String(options.get('characters') ?? '');
-    const names = rawList
-      .split(',')
-      .map((n) => normalizeCharacterName(n))
-      .filter(Boolean)
-      .slice(0, 10);
-
-    if (names.length === 0) {
-      return ephemeralMessage('Please provide at least one character name to compare.');
-    }
-
-    const summaries = await repo.getCandidateLootSummaries(guildId, names);
-    const embed = buildCandidateComparisonEmbed(
-      `⚖️ Loot Council Candidate Comparison (${summaries.length})`,
-      'Comparing obtained gear in the database to assist Loot Council deliberation:',
-      summaries
-    );
-
-    return {
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: { embeds: [embed] },
-    };
-  }
-
-  if (subcommand === 'council') {
-    const rawItem = String(options.get('item') ?? '');
-    const { itemId, itemName } = parseWowItemToken(rawItem);
-    const rawCandidates = options.get('candidates') ? String(options.get('candidates')) : '';
-    const roleFilter = options.get('role') ? (String(options.get('role')) as RaidRole) : undefined;
-    const raidOption = options.get('raid') ? String(options.get('raid')).trim() : undefined;
-
-    let raidContext = raidOption;
-    let candidateNames: string[] = [];
-
-    if (rawCandidates.trim()) {
-      candidateNames = rawCandidates
-        .split(/[,;]+/)
-        .map((n) => normalizeCharacterName(n))
-        .filter(Boolean);
-    } else {
-      // Check if there is a matching or recent raid with confirmed/bench signups
-      let targetRaid = raidOption ? await repo.getRaidEvent(guildId, raidOption) : null;
-      if (!targetRaid) {
-        const recentRaids = await repo.listRaidEvents(guildId, 10);
-        if (raidOption) {
-          targetRaid =
-            recentRaids.find((r) => r.name.toLowerCase().includes(raidOption.toLowerCase())) ??
-            recentRaids[0] ??
-            null;
-        } else {
-          targetRaid = recentRaids[0] ?? null;
-        }
-      }
-
-      if (targetRaid) {
-        if (!raidContext) {
-          raidContext = `${targetRaid.name} (${targetRaid.scheduledAt})`;
-        }
-        const signups = await repo.listRaidSignups(guildId, targetRaid.raidId);
-        const attending = signups.filter((s) => {
-          if (s.status !== 'CONFIRMED' && s.status !== 'BENCH') return false;
-          if (roleFilter && s.role !== roleFilter) return false;
-          return true;
-        });
-        candidateNames = attending.map((s) => s.characterName);
-      }
-
-      // Fall back to registered guild characters if no raid signups matched
-      if (candidateNames.length === 0) {
-        const guildChars = await repo.listGuildCharacters(guildId);
-        const mains = guildChars.filter((c) => c.isMain);
-        const pool = mains.length > 0 ? mains : guildChars;
-        candidateNames = pool.map((c) => c.name);
-      }
-
-      // Fall back to recent loot history characters if no characters are registered yet
-      if (candidateNames.length === 0) {
-        const recentHistory = await repo.listGuildLootHistory(guildId, 50);
-        const uniqueChars = new Set<string>();
-        for (const award of recentHistory) {
-          uniqueChars.add(award.characterName);
-        }
-        candidateNames = Array.from(uniqueChars);
-      }
-    }
-
-    let summaries = await repo.getCandidateLootSummaries(guildId, candidateNames);
-
-    if (roleFilter) {
-      summaries = summaries.filter((s) => {
-        if (!s.character) return true;
-        return (
-          s.character.primaryRole === roleFilter || s.character.offspecRole === roleFilter
-        );
-      });
-    }
-
-    const embed = buildLootCouncilRecommendationEmbed({
-      itemName,
-      itemId,
-      raidContext,
-      roleFilter,
-      summaries,
-    });
-
-    return {
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: { embeds: [embed] },
-    };
-  }
-
-  if (subcommand === 'award') {
-    const winnerName = normalizeCharacterName(String(options.get('character') ?? ''));
-    const rawItem = String(options.get('item') ?? '').trim();
-    const specType = (options.get('spec') ? String(options.get('spec')) : 'MS') as LootSpecType;
-    const raidInstance = options.get('raid') ? String(options.get('raid')) : undefined;
-
-    if (!winnerName) {
-      return ephemeralMessage('❌ Please specify a valid winning character name.');
-    }
-
-    const { itemId, itemName } = parseWowItemToken(rawItem);
-    const awardedAt = new Date().toISOString();
-    const awardHash = createHash('sha256')
-      .update(`${awardedAt.slice(0, 16)}|${winnerName.toLowerCase()}|${(itemId ?? itemName).toString().toLowerCase()}`)
-      .digest('hex')
-      .slice(0, 16);
-
-    const award: ObtainedGearAward = {
-      guildId,
-      awardHash,
-      characterName: winnerName,
-      itemName,
-      itemId,
-      specType,
-      raidInstance,
-      awardedByUserId: userId,
-      awardedAt,
-    };
-
-    await repo.recordLootAwards([award]);
-
-    return {
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: {
-        embeds: [
-          {
-            title: `🏆 Loot Awarded — ${itemName}`,
-            description: `**${winnerName}** was awarded **[${itemName}]** (${specType})${raidInstance ? ` in **${raidInstance}**` : ''} by <@${userId}>.`,
-            color: PURPLE_EPIC,
-          },
-        ],
-      },
-    };
-  }
-
   return ephemeralMessage('Unknown `/loot` subcommand.');
-}
-
-async function handleBankCommand(
-  guildId: string,
-  userId: string,
-  subcommand: string,
-  options: Map<string, string | number | boolean>,
-  repo: GuildRepository
-): Promise<APIInteractionResponse> {
-  if (subcommand === 'set') {
-    const itemName = String(options.get('item') ?? '').trim();
-    const quantity = Number(options.get('quantity') ?? 0);
-    const category = (options.get('category') ?? 'Consumable') as GuildBankItem['category'];
-
-    const updated = await repo.upsertBankItem({
-      guildId,
-      category,
-      itemName,
-      quantity,
-      updatedByUserId: userId,
-      updatedAt: new Date().toISOString(),
-    });
-
-    return {
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: {
-        embeds: [
-          {
-            title: '🏦 Guild Bank Updated',
-            description:
-              updated.quantity > 0
-                ? `Set **[${updated.itemName}]** (${updated.category}) quantity to **${updated.quantity}x**.`
-                : `Removed **[${updated.itemName}]** from the Guild Bank inventory.`,
-            color: GOLD_COLOR,
-          },
-        ],
-      },
-    };
-  }
-
-  if (subcommand === 'search') {
-    const query = options.get('query') ? String(options.get('query')) : undefined;
-    const items = await repo.listBankItems(guildId, query);
-    const lines =
-      items.length > 0
-        ? items.map((i) => `• **[${i.category}]** **${i.itemName}** — \`${i.quantity}x\``)
-        : ['_No matching items in the Guild Bank._'];
-
-    return {
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: {
-        embeds: [
-          {
-            title: `🏦 ${GUILD_NAME} — Guild Bank Inventory${query ? ` ("${query}")` : ''}`,
-            description: lines.join('\n'),
-            color: GOLD_COLOR,
-          },
-        ],
-      },
-    };
-  }
-
-  return ephemeralMessage('Unknown `/bank` subcommand.');
 }
 
 async function handleRequestCommand(
@@ -1108,7 +881,7 @@ async function handleModalSubmit(
               .join('\n'),
             color: GREEN_UNCOMMON,
             footer: {
-              text: 'Obtained gear is now available in /loot history, /loot compare, and /loot council',
+              text: 'Obtained gear is now available in /loot history and the guild database',
             },
           },
         ],
