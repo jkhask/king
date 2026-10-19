@@ -114,21 +114,42 @@ export async function ensureGuildClassRoles(
   const updated: WowClass[] = [];
   const errors: string[] = [];
 
-  for (const wowClass of WOW_CLASSES) {
-    const color = CLASS_COLORS[wowClass];
-    const mappedId = roleMap[wowClass];
-    const foundRole =
-      (mappedId ? existingById.get(mappedId) : undefined) ??
-      existingByName.get(wowClass.toLowerCase());
+  await Promise.all(
+    WOW_CLASSES.map(async (wowClass) => {
+      const color = CLASS_COLORS[wowClass];
+      const mappedId = roleMap[wowClass];
+      const foundRole =
+        (mappedId ? existingById.get(mappedId) : undefined) ??
+        existingByName.get(wowClass.toLowerCase());
 
-    if (foundRole) {
-      roleMap[wowClass] = foundRole.id;
-      // If not hoisted or color doesn't match, patch it so sidebar grouping works
-      if (!foundRole.hoist || foundRole.color !== color) {
-        const patchRes = await discordRequest<APIRole>(
-          `/guilds/${guildId}/roles/${foundRole.id}`,
+      if (foundRole) {
+        roleMap[wowClass] = foundRole.id;
+        // If not hoisted or color doesn't match, patch it so sidebar grouping works
+        if (!foundRole.hoist || foundRole.color !== color) {
+          const patchRes = await discordRequest<APIRole>(
+            `/guilds/${guildId}/roles/${foundRole.id}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify({
+                name: wowClass,
+                color,
+                hoist: true,
+                mentionable: true,
+              }),
+            },
+            botToken
+          );
+          if (patchRes.ok) {
+            updated.push(wowClass);
+          } else {
+            errors.push(`Could not update role ${wowClass}: ${patchRes.errorText}`);
+          }
+        }
+      } else {
+        const createRes = await discordRequest<APIRole>(
+          `/guilds/${guildId}/roles`,
           {
-            method: 'PATCH',
+            method: 'POST',
             body: JSON.stringify({
               name: wowClass,
               color,
@@ -138,34 +159,15 @@ export async function ensureGuildClassRoles(
           },
           botToken
         );
-        if (patchRes.ok) {
-          updated.push(wowClass);
+        if (createRes.ok && createRes.data) {
+          roleMap[wowClass] = createRes.data.id;
+          created.push(wowClass);
         } else {
-          errors.push(`Could not update role ${wowClass}: ${patchRes.errorText}`);
+          errors.push(`Could not create role ${wowClass}: ${createRes.errorText}`);
         }
       }
-    } else {
-      const createRes = await discordRequest<APIRole>(
-        `/guilds/${guildId}/roles`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            name: wowClass,
-            color,
-            hoist: true,
-            mentionable: true,
-          }),
-        },
-        botToken
-      );
-      if (createRes.ok && createRes.data) {
-        roleMap[wowClass] = createRes.data.id;
-        created.push(wowClass);
-      } else {
-        errors.push(`Could not create role ${wowClass}: ${createRes.errorText}`);
-      }
-    }
-  }
+    })
+  );
 
   return {
     roleMap: roleMap as Record<WowClass, string>,
