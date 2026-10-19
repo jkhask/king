@@ -1,0 +1,8 @@
+node_modules/
+.pnpm-store/
+dist/
+cdk.out/
+.env
+*.tsbuildinfo
+.DS_Store
+coverage/
