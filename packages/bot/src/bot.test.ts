@@ -7,9 +7,10 @@ import {
   ComponentType,
   InteractionResponseType,
   InteractionType,
+  MessageFlags,
 } from 'discord-api-types/v10';
 import { describe, expect, it } from 'vitest';
-import { handleDiscordInteraction, verifyDiscordSignature } from './index.js';
+import { handleDiscordInteraction, SLASH_COMMANDS, verifyDiscordSignature } from './index.js';
 
 describe('Discord Ed25519 Signature Verification', () => {
   it('verifies valid Ed25519 signatures and rejects tampered payloads', async () => {
@@ -42,6 +43,10 @@ describe('Discord Ed25519 Signature Verification', () => {
 });
 
 describe('Diminishing Returns Bot Interaction Router', () => {
+  it('exposes only /raid and /loot slash commands', () => {
+    expect(SLASH_COMMANDS.map((c) => c.name)).toEqual(['raid', 'loot']);
+  });
+
   it('responds to Ping with Pong', async () => {
     const repo = new InMemoryGuildRepository();
     const res = await handleDiscordInteraction(
@@ -57,31 +62,33 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(res).toEqual({ type: InteractionResponseType.Pong });
   });
 
-  it('registers Alliance characters, tracks raid attendance, imports Gargul loot, and shows /loot council recommendations', async () => {
+  it('restricts /raid commands to members with the Council role while allowing all members to sign up via buttons', async () => {
     const repo = new InMemoryGuildRepository();
     const guildId = 'guild-dr';
 
-    // 1. Register two Healers: Falstad (Dwarf Shaman) and Tyrande (Night Elf Priest)
-    const regFalstad = await handleDiscordInteraction(
+    // 1. Non-Council member attempts /raid create -> rejected
+    const unauthorizedRes = await handleDiscordInteraction(
       {
         id: '2',
         application_id: 'app',
         type: InteractionType.ApplicationCommand,
         guild_id: guildId,
-        member: { user: { id: 'player-1' } },
+        member: {
+          nick: 'Falstad',
+          roles: ['Shaman'],
+          user: { id: 'player-1', username: 'falstad_user' },
+        },
         data: {
-          id: 'cmd-1',
-          name: 'character',
+          id: 'cmd-raid',
+          name: 'raid',
           type: ApplicationCommandType.ChatInput,
           options: [
             {
               type: ApplicationCommandOptionType.Subcommand,
-              name: 'register',
+              name: 'create',
               options: [
-                { type: ApplicationCommandOptionType.String, name: 'name', value: 'falstad' },
-                { type: ApplicationCommandOptionType.String, name: 'race', value: 'Dwarf' },
-                { type: ApplicationCommandOptionType.String, name: 'class', value: 'Shaman' },
-                { type: ApplicationCommandOptionType.String, name: 'role', value: 'Healer' },
+                { type: ApplicationCommandOptionType.String, name: 'template', value: 'hyjal-summit' },
+                { type: ApplicationCommandOptionType.String, name: 'schedule', value: 'Wed 8:00 PM EST' },
               ],
             },
           ],
@@ -91,28 +98,35 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       } as unknown as APIInteraction,
       repo
     );
-    expect(regFalstad.type).toBe(InteractionResponseType.ChannelMessageWithSource);
 
-    await handleDiscordInteraction(
+    expect(unauthorizedRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
+    const unauthData = 'data' in unauthorizedRes ? unauthorizedRes.data : undefined;
+    expect(unauthData && 'flags' in unauthData ? unauthData.flags : undefined).toBe(MessageFlags.Ephemeral);
+    expect(unauthData && 'content' in unauthData ? unauthData.content : '').toContain('Council');
+
+    // 2. Council member runs /raid create -> succeeds
+    const createRes = await handleDiscordInteraction(
       {
-        id: '2b',
+        id: '3',
         application_id: 'app',
         type: InteractionType.ApplicationCommand,
         guild_id: guildId,
-        member: { user: { id: 'player-2' } },
+        member: {
+          nick: 'Bolvar',
+          roles: ['Council', 'Paladin'],
+          user: { id: 'officer-1', username: 'bolvar_user' },
+        },
         data: {
-          id: 'cmd-1b',
-          name: 'character',
+          id: 'cmd-raid',
+          name: 'raid',
           type: ApplicationCommandType.ChatInput,
           options: [
             {
               type: ApplicationCommandOptionType.Subcommand,
-              name: 'register',
+              name: 'create',
               options: [
-                { type: ApplicationCommandOptionType.String, name: 'name', value: 'tyrande' },
-                { type: ApplicationCommandOptionType.String, name: 'race', value: 'Night Elf' },
-                { type: ApplicationCommandOptionType.String, name: 'class', value: 'Priest' },
-                { type: ApplicationCommandOptionType.String, name: 'role', value: 'Healer' },
+                { type: ApplicationCommandOptionType.String, name: 'template', value: 'hyjal-summit' },
+                { type: ApplicationCommandOptionType.String, name: 'schedule', value: 'Wed 8:00 PM EST' },
               ],
             },
           ],
@@ -123,7 +137,49 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       repo
     );
 
-    // 2. Create a raid and record Tyrande attending
+    expect(createRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
+    const raids = await repo.listRaidEvents(guildId);
+    expect(raids).toHaveLength(1);
+    const raidId = raids[0].raidId;
+
+    // 3. Non-Council member clicks Healer signup button -> signs up using Discord nick + Carl-bot class role
+    const signupRes = await handleDiscordInteraction(
+      {
+        id: '4',
+        application_id: 'app',
+        type: InteractionType.MessageComponent,
+        guild_id: guildId,
+        member: {
+          nick: 'falstad',
+          roles: ['Shaman'],
+          user: { id: 'player-1', username: 'falstad_user' },
+        },
+        data: {
+          component_type: ComponentType.Button,
+          custom_id: `raid_signup:${raidId}:Healer`,
+        },
+        token: 'tok',
+        version: 1,
+      } as unknown as APIInteraction,
+      repo
+    );
+
+    expect(signupRes.type).toBe(InteractionResponseType.UpdateMessage);
+    const signups = await repo.listRaidSignups(guildId, raidId);
+    expect(signups).toHaveLength(1);
+    expect(signups[0]).toMatchObject({
+      userId: 'player-1',
+      characterName: 'Falstad',
+      wowClass: 'Shaman',
+      role: 'Healer',
+      status: 'CONFIRMED',
+    });
+  });
+
+  it('imports Gargul loot and displays /loot history with attendance stats', async () => {
+    const repo = new InMemoryGuildRepository();
+    const guildId = 'guild-dr';
+
     const raid = await repo.createRaidEvent({
       guildId,
       raidId: 'raid-hyjal-1',
@@ -138,16 +194,6 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     await repo.upsertRaidSignup({
       guildId,
       raidId: raid.raidId,
-      userId: 'player-2',
-      characterName: 'Tyrande',
-      wowClass: 'Priest',
-      role: 'Healer',
-      status: 'CONFIRMED',
-      updatedAt: new Date().toISOString(),
-    });
-    await repo.upsertRaidSignup({
-      guildId,
-      raidId: raid.raidId,
       userId: 'player-1',
       characterName: 'Falstad',
       wowClass: 'Shaman',
@@ -156,11 +202,11 @@ describe('Diminishing Returns Bot Interaction Router', () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // 3. Submit Gargul Loot Import Modal (Falstad already won an MS item today)
+    // Submit Gargul Loot Import Modal
     const todayIso = new Date().toISOString().slice(0, 10);
     const modalRes = await handleDiscordInteraction(
       {
-        id: '3',
+        id: '5',
         application_id: 'app',
         type: InteractionType.ModalSubmit,
         guild_id: guildId,
@@ -201,10 +247,10 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(lootHistory).toHaveLength(1);
     expect(lootHistory[0].itemName).toBe("Finkle's Lava Dredger");
 
-    // 4. Run /loot history for Falstad -> should display obtained gear history and attendance
+    // Run /loot history for Falstad
     const histRes = await handleDiscordInteraction(
       {
-        id: '4',
+        id: '6',
         application_id: 'app',
         type: InteractionType.ApplicationCommand,
         guild_id: guildId,
@@ -239,75 +285,5 @@ describe('Diminishing Returns Bot Interaction Router', () => {
     expect(embed?.title).toContain('Obtained Gear History — Falstad');
     expect(embed?.fields?.[0]?.value).toContain("Finkle's Lava Dredger");
   });
-
-  it('opens the onboarding character registration modal and registers a main character', async () => {
-    const repo = new InMemoryGuildRepository();
-    const guildId = 'guild-dr';
-    const userId = 'new-member-1';
-
-    // 1. Click "Register Main Character" button on the Welcome card
-    const openModalRes = await handleDiscordInteraction(
-      {
-        id: '10',
-        application_id: 'app',
-        type: InteractionType.MessageComponent,
-        guild_id: guildId,
-        member: { user: { id: userId } },
-        data: {
-          component_type: ComponentType.Button,
-          custom_id: 'onboard_open_modal',
-        },
-        token: 'tok',
-        version: 1,
-      } as unknown as APIInteraction,
-      repo
-    );
-
-    expect(openModalRes.type).toBe(InteractionResponseType.Modal);
-
-    // 2. Submit the Onboarding Modal
-    const submitRes = await handleDiscordInteraction(
-      {
-        id: '11',
-        application_id: 'app',
-        type: InteractionType.ModalSubmit,
-        guild_id: guildId,
-        member: { user: { id: userId } },
-        data: {
-          custom_id: 'modal_onboard_register',
-          components: [
-            {
-              type: ComponentType.ActionRow,
-              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_char_name', value: 'turalyon' }],
-            },
-            {
-              type: ComponentType.ActionRow,
-              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_race', value: 'Human' }],
-            },
-            {
-              type: ComponentType.ActionRow,
-              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_class', value: 'Paladin' }],
-            },
-            {
-              type: ComponentType.ActionRow,
-              components: [{ type: ComponentType.TextInput, custom_id: 'onboard_role', value: 'Tank' }],
-            },
-          ],
-        },
-        token: 'tok',
-        version: 1,
-      } as unknown as APIInteraction,
-      repo
-    );
-
-    expect(submitRes.type).toBe(InteractionResponseType.ChannelMessageWithSource);
-    const saved = await repo.getCharacterByName(guildId, 'Turalyon');
-    expect(saved).toMatchObject({
-      name: 'Turalyon',
-      race: 'Human',
-      wowClass: 'Paladin',
-      primaryRole: 'Tank',
-      isMain: true,
-    });
-  });
 });
+

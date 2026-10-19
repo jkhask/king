@@ -1,7 +1,5 @@
 import {
   type CandidateLootSummary,
-  type GuildCharacter,
-  type GuildRequestTicket,
   type LootCouncilSession,
   type RaidEvent,
   type RaidSignup,
@@ -12,7 +10,6 @@ import {
   GUILD_NAME,
   RAID_ROLES,
   ROLE_ICONS,
-  WOW_CLASSES,
   WOW_FOREVER_RAIDS,
 } from '@dr/shared';
 import {
@@ -27,41 +24,6 @@ export const ALLIANCE_BLUE = 0x0070dd;
 export const GOLD_COLOR = 0xf8b700;
 export const PURPLE_EPIC = 0xa335ee;
 export const GREEN_UNCOMMON = 0x1eff00;
-
-export function buildRosterSummaryEmbed(characters: GuildCharacter[]): APIEmbed {
-  const mains = characters.filter((c) => c.isMain);
-  const alts = characters.filter((c) => !c.isMain);
-
-  const roleCounts = { Tank: 0, Healer: 0, Melee: 0, Ranged: 0 };
-  for (const m of mains) {
-    roleCounts[m.primaryRole] = (roleCounts[m.primaryRole] ?? 0) + 1;
-  }
-
-  const classFields = WOW_CLASSES.map((wowClass) => {
-    const classMains = mains.filter((c) => c.wowClass === wowClass);
-    const classAlts = alts.filter((c) => c.wowClass === wowClass);
-    const listText =
-      classMains.length > 0
-        ? classMains.map((c) => `${ROLE_ICONS[c.primaryRole]} **${c.name}** (${c.race})`).join('\n')
-        : '_None_';
-    return {
-      name: `${CLASS_ICONS[wowClass]} ${wowClass} (${classMains.length}M / ${classAlts.length}A)`,
-      value: listText,
-      inline: true,
-    };
-  });
-
-  return {
-    title: `🦁 ${GUILD_NAME} — Alliance Roster (WoW: Forever)`,
-    description: [
-      `**Mains:** ${mains.length} | **Alts:** ${alts.length} | **Total Characters:** ${characters.length}`,
-      `**Main Role Breakdown:** 🛡️ Tanks: **${roleCounts.Tank}** • 💚 Healers: **${roleCounts.Healer}** • ⚔️ Melee: **${roleCounts.Melee}** • 🎯 Ranged: **${roleCounts.Ranged}**`,
-    ].join('\n'),
-    color: ALLIANCE_BLUE,
-    fields: classFields,
-    footer: { text: 'World of Warcraft: Forever • Use /character register to add or update your character' },
-  };
-}
 
 export function buildRaidEventMessage(
   raid: RaidEvent,
@@ -126,7 +88,7 @@ export function buildRaidEventMessage(
     color: raid.status === 'OPEN' ? ALLIANCE_BLUE : GOLD_COLOR,
     fields: [...roleFields, ...extraFields],
     footer: {
-      text: `${GUILD_NAME} • Click a button below to sign up with your Main character`,
+      text: `${GUILD_NAME} • Click a role or status button below to sign up`,
     },
   };
 
@@ -136,34 +98,27 @@ export function buildRaidEventMessage(
       {
         type: ComponentType.Button,
         style: ButtonStyle.Primary,
-        custom_id: `raid_signup:${raid.raidId}:MAIN`,
-        label: 'Sign Up (Main Role)',
-        emoji: { name: '✅' },
-      },
-      {
-        type: ComponentType.Button,
-        style: ButtonStyle.Secondary,
         custom_id: `raid_signup:${raid.raidId}:Tank`,
         label: 'Tank',
         emoji: { name: '🛡️' },
       },
       {
         type: ComponentType.Button,
-        style: ButtonStyle.Secondary,
+        style: ButtonStyle.Primary,
         custom_id: `raid_signup:${raid.raidId}:Healer`,
         label: 'Healer',
         emoji: { name: '💚' },
       },
       {
         type: ComponentType.Button,
-        style: ButtonStyle.Secondary,
+        style: ButtonStyle.Primary,
         custom_id: `raid_signup:${raid.raidId}:Melee`,
         label: 'Melee',
         emoji: { name: '⚔️' },
       },
       {
         type: ComponentType.Button,
-        style: ButtonStyle.Secondary,
+        style: ButtonStyle.Primary,
         custom_id: `raid_signup:${raid.raidId}:Ranged`,
         label: 'Ranged',
         emoji: { name: '🎯' },
@@ -220,8 +175,8 @@ export function buildCandidateComparisonEmbed(
 
   const fields = ranked.map((s) => {
     const charMeta = s.character
-      ? `${CLASS_ICONS[s.character.wowClass]} ${s.character.wowClass} (${s.character.primaryRole}${s.character.isMain ? ' • ⭐ Main' : ' • 🔹 Alt'})`
-      : 'Unregistered Character';
+      ? ` — ${CLASS_ICONS[s.character.wowClass]} ${s.character.wowClass} (${s.character.primaryRole})`
+      : '';
 
     const lastMsText =
       s.daysSinceLastMsAward !== undefined
@@ -247,7 +202,7 @@ export function buildCandidateComparisonEmbed(
     const rankPrefix = ranked.length > 1 ? `${formatRankBadge(s.recommendationRank)} — ` : '';
 
     return {
-      name: `${rankPrefix}${s.characterName} — ${charMeta}`,
+      name: `${rankPrefix}${s.characterName}${charMeta}`,
       value: [
         ranked.length > 1 && s.recommendationReasons.length > 0
           ? `💡 **Recommendation (Score ${s.recommendationScore}):** ${s.recommendationReasons.join(' • ')}`
@@ -266,7 +221,7 @@ export function buildCandidateComparisonEmbed(
     fields.push({
       name: 'No Eligible Candidates Found',
       value:
-        'Specify candidate names with `candidates:` (e.g. `/loot council item:[Item] candidates:Bolvar, Magni`), sign up for a raid via `/raid create`, or register characters with `/character register`.',
+        'Import raid drops with `/loot import-gargul` or schedule a raid with `/raid create`.',
       inline: false,
     });
   }
@@ -420,63 +375,3 @@ export function buildLootCouncilMessage(
   return { embeds: [embed], components };
 }
 
-export function buildRequestTicketMessage(ticket: GuildRequestTicket): {
-  embeds: APIEmbed[];
-  components: APIActionRowComponent<APIButtonComponent>[];
-} {
-  const statusEmoji =
-    ticket.status === 'OPEN'
-      ? '🟢 OPEN'
-      : ticket.status === 'CLAIMED'
-        ? '🟡 CLAIMED'
-        : ticket.status === 'FULFILLED'
-          ? '✅ FULFILLED'
-          : '⚫ CANCELLED';
-
-  const embed: APIEmbed = {
-    title: `🛠️ [${ticket.requestType}] ${ticket.quantity}x ${ticket.itemName}`,
-    description: [
-      `👤 **Requester:** **${ticket.characterName}** (<@${ticket.requesterUserId}>)`,
-      `📦 **Materials Provided:** ${ticket.matsProvided ? '✅ Yes' : '❌ No (Requesting from Guild Bank / Crafter)'}`,
-      `📌 **Status:** **${statusEmoji}**${ticket.claimedByUserId ? ` (by <@${ticket.claimedByUserId}>)` : ''}`,
-      ticket.notes ? `📝 **Notes:** ${ticket.notes}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    color: ticket.status === 'FULFILLED' ? GREEN_UNCOMMON : GOLD_COLOR,
-    footer: { text: `Ticket ID: ${ticket.requestId}` },
-  };
-
-  if (ticket.status === 'FULFILLED' || ticket.status === 'CANCELLED') {
-    return { embeds: [embed], components: [] };
-  }
-
-  const row: APIActionRowComponent<APIButtonComponent> = {
-    type: ComponentType.ActionRow,
-    components: [
-      {
-        type: ComponentType.Button,
-        style: ButtonStyle.Primary,
-        custom_id: `req_action:${ticket.requestId}:CLAIMED`,
-        label: 'Claim Request',
-        emoji: { name: '🙋' },
-      },
-      {
-        type: ComponentType.Button,
-        style: ButtonStyle.Success,
-        custom_id: `req_action:${ticket.requestId}:FULFILLED`,
-        label: 'Mark Fulfilled',
-        emoji: { name: '✅' },
-      },
-      {
-        type: ComponentType.Button,
-        style: ButtonStyle.Danger,
-        custom_id: `req_action:${ticket.requestId}:CANCELLED`,
-        label: 'Cancel',
-        emoji: { name: '✖️' },
-      },
-    ],
-  };
-
-  return { embeds: [embed], components: [row] };
-}

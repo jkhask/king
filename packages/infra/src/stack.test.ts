@@ -32,6 +32,9 @@ describe('DiminishingReturnsStack (AWS CDK)', () => {
       RouteKey: 'POST /interactions',
     });
 
+    // Ensure no scheduled EventBridge rules exist
+    template.resourceCountIs('AWS::Events::Rule', 0);
+
     expect(stack.guildTable).toBeDefined();
     expect(stack.httpApi).toBeDefined();
   });

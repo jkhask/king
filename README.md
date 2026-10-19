@@ -61,11 +61,10 @@ pnpm register-commands
 
 ## Discord Slash Commands Overview
 
-- **`/character register | list | delete`**: Register your Main and Alt Alliance characters, roles, professions, and notable recipes.
-- **`/roster summary | crafters`**: View class/role breakdown across the guild or search crafters by profession/recipe.
-- **`/raid create | view | list`**: Schedule 10m (*Barrow Deeps*), 20m (*Hyjal Summit*), or 40m (*Onyxia's Lair*) raids with one-click signup buttons.
+- **`/raid create | view | list`** *(Requires Discord **Council** role)*:
+  - Schedule 10m (*Barrow Deeps*), 20m (*Hyjal Summit*), or 40m (*Onyxia's Lair* / *Molten Core*) raids.
+  - All guild members can sign up on the posted raid card using one-click role (`Tank`, `Healer`, `Melee`, `Ranged`) and status (`Bench`, `Tentative`, `Absent`) buttons (automatically reading their Discord server nickname and Carl-bot WoW Class role).
 - **`/loot import-gargul | history`**:
   - Paste a **Gargul** export string (CSV/TSV/JSON) via modal to log obtained gear into DynamoDB.
   - View obtained gear history for a specific character or recent guild-wide drops (full loot/DB explorer planned for the companion web app).
-- **`/request create | list`**: Manage interactive crafting and consumable request tickets.
-- **`/setup discord | sync-members`**: Provision hoisted WoW Class Roles, post the Welcome Registration Card, and sync member nicknames/roles.
+
